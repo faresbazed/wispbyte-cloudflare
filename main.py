@@ -1,18 +1,6 @@
 #!/usr/bin/env python3
 """
-Wispbyte Xray + Cloudflare Tunnel launcher.
-
-Required environment variable:
-  CLOUDFLARE_TUNNEL_TOKEN  Cloudflare Tunnel token (rotate it if previously exposed)
-
-Optional environment variables:
-  VLESS_UUID               Default: 00000000-0000-4000-8000-000000000123
-  WS_PATH                  Default: /vless
-  XRAY_PORT                Default: 10000
-  TUNNEL_HOSTNAME          Default: wis.faresbazed.web.id
-  XRAY_VERSION             Default: latest
-  CLOUDFLARED_VERSION      Default: latest
-  TUNNEL_PROTOCOL          Default: http2 (use "quic" to revert)
+Wispbyte & Render Xray + Cloudflare Tunnel launcher.
 """
 
 import json
@@ -24,20 +12,19 @@ import stat
 import subprocess
 import sys
 import tarfile
-import tempfile
 import time
 import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
 
+# Use /home/container on Wispbyte, or current directory on Render
 BASE_DIR = Path("/home/container")
-if not BASE_DIR.exists():
+if not BASE_DIR.exists() or not os.access(BASE_DIR, os.W_OK):
     BASE_DIR = Path.cwd()
 
 
 def load_dotenv(env_path):
-    """Load variables from Wispbyte's .env file into os.environ."""
     if env_path.is_file():
         for line in env_path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
@@ -58,7 +45,8 @@ XRAY_CONFIG = BASE_DIR / "xray-config.json"
 TOKEN = os.environ.get("CLOUDFLARE_TUNNEL_TOKEN", "").strip()
 UUID = os.environ.get("VLESS_UUID", "00000000-0000-4000-8000-000000000123").strip()
 WS_PATH = os.environ.get("WS_PATH", "/vless").strip()
-XRAY_PORT = int(os.environ.get("XRAY_PORT", "10000"))
+# Render automatically sets PORT (defaulting to 10000)
+XRAY_PORT = int(os.environ.get("XRAY_PORT", os.environ.get("PORT", "10000")))
 HOSTNAME = os.environ.get("TUNNEL_HOSTNAME", "wis.faresbazed.web.id").strip()
 TUNNEL_PROTOCOL = os.environ.get("TUNNEL_PROTOCOL", "http2").strip().lower()
 XRAY_VERSION = os.environ.get("XRAY_VERSION", "latest").strip()
@@ -134,8 +122,6 @@ def ensure_cloudflared():
         url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
     else:
         version = CLOUDFLARED_VERSION
-        if not version.startswith("202"):
-            version = f"{version}"
         url = (
             "https://github.com/cloudflare/cloudflared/releases/download/"
             f"{version}/cloudflared-linux-amd64"
@@ -156,7 +142,8 @@ def write_xray_config():
         "log": {"loglevel": "warning"},
         "inbounds": [
             {
-                "listen": "127.0.0.1",
+                # Bind to 0.0.0.0 so Render's port scanner detects the open port
+                "listen": "0.0.0.0",
                 "port": XRAY_PORT,
                 "protocol": "vless",
                 "settings": {
@@ -212,7 +199,7 @@ def signal_handler(signum, _frame):
 
 def main():
     if not TOKEN:
-        log("ERROR: Set CLOUDFLARE_TUNNEL_TOKEN in the Wispbyte server environment.")
+        log("ERROR: Set CLOUDFLARE_TUNNEL_TOKEN in the environment.")
         return 1
     if TUNNEL_PROTOCOL not in ("http2", "quic", "auto"):
         log("ERROR: TUNNEL_PROTOCOL must be http2, quic, or auto.")
@@ -226,7 +213,6 @@ def main():
         ensure_cloudflared()
         write_xray_config()
 
-        # Validate config before launching the long-running process.
         check = subprocess.run(
             [str(XRAY_BIN), "run", "-test", "-config", str(XRAY_CONFIG)],
             cwd=str(BASE_DIR),
@@ -242,7 +228,7 @@ def main():
 
         log(f"VLESS UUID: {UUID}")
         log(f"WebSocket path: {WS_PATH}")
-        log(f"Xray local listener: 127.0.0.1:{XRAY_PORT}")
+        log(f"Xray listener: 0.0.0.0:{XRAY_PORT}")
         log(f"Tunnel hostname: {HOSTNAME}")
         log(f"Cloudflare transport: {TUNNEL_PROTOCOL}")
         log("Starting Xray...")
@@ -253,7 +239,6 @@ def main():
         )
         children.append(xray)
 
-        # Wait briefly and fail clearly if Xray exits immediately.
         time.sleep(1)
         if xray.poll() is not None:
             log(f"ERROR: Xray exited immediately with code {xray.returncode}.")
