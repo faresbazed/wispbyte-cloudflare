@@ -37,6 +37,7 @@ if not BASE_DIR.exists():
 
 
 def load_dotenv(env_path):
+    """Load variables from Wispbyte's .env file into os.environ."""
     if env_path.is_file():
         for line in env_path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
