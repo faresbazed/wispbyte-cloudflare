@@ -60,4 +60,4 @@ Supported:
 • Wispbyte
 • MS Hosting
 • Botkeep
-• Railway (Coming soon)
+• Railway
